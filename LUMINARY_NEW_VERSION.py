@@ -259,28 +259,15 @@ def _call_gemini(contents: list) -> str | None:
 
 def _raw_call(contents: list) -> str | None:
     """
-    Master call — tries Groq first, falls back to Gemini.
-    Converts Gemini-format contents to a flat prompt for Groq.
+    Master call — Groq only. No Gemini fallback.
+    Converts contents list to a flat prompt string for Groq.
     """
-    # Flatten contents list to a single prompt string for Groq
     flat_prompt = ""
     for item in contents:
         for part in item.get("parts", []):
             flat_prompt += part.get("text", "") + "\n"
     flat_prompt = flat_prompt.strip()
-
-    # Try Groq first
-    result = _call_groq(flat_prompt)
-    if result:
-        return result
-
-    # Fall back to Gemini
-    result = _call_gemini(contents)
-    if result:
-        return result
-
-    st.session_state.api_ok = False
-    return None
+    return _call_groq(flat_prompt)
 
 
 def ask_ai(prompt: str, system: str = ""):
