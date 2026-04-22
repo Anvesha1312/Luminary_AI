@@ -33,7 +33,7 @@ def _get_secret(key: str, fallback: str) -> str:
 
 # ── Paste your keys here for LOCAL running ──
 # On Streamlit Cloud these are ignored — secrets panel is used instead
-_GROQ_KEY_LOCAL   = "PASTE_YOUR_GROQ_KEY_HERE"
+_GROQ_KEY_LOCAL   = "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"
 _GEMINI_KEY_LOCAL = "AIzaSyDVWDU4OSoCg_HQUUybO4dBewc7kuDAVg0"
 
 # These resolve automatically for both local + cloud
