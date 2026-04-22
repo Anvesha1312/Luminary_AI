@@ -25,7 +25,7 @@ from datetime import datetime
 # ─────────────────────────────────────────
 
 # ── Paste your keys here for LOCAL running ──
-_GROQ_KEY_LOCAL   = "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"
+_GROQ_KEY_LOCAL   = "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"
 _GEMINI_KEY_LOCAL = "AIzaSyDVWDU4OSoCg_HQUUybO4dBewc7kuDAVg0"
 
 def get_groq_key() -> str:
