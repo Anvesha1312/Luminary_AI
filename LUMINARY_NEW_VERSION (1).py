@@ -24,29 +24,29 @@ from datetime import datetime
 # Cloud:    add keys in Streamlit Cloud → App Settings → Secrets
 # ─────────────────────────────────────────
 
-def _get_secret(key: str, fallback: str) -> str:
-    """Reads from st.secrets if deployed, falls back to hardcoded value locally."""
-    try:
-        return st.secrets[key]
-    except Exception:
-        return fallback
-
 # ── Paste your keys here for LOCAL running ──
-# On Streamlit Cloud these are ignored — secrets panel is used instead
-_GROQ_KEY_LOCAL   = "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"
+_GROQ_KEY_LOCAL   = "PASTE_YOUR_GROQ_KEY_HERE"
 _GEMINI_KEY_LOCAL = "AIzaSyDVWDU4OSoCg_HQUUybO4dBewc7kuDAVg0"
 
-# These resolve automatically for both local + cloud
-GROQ_API_KEY   = _get_secret("GROQ_API_KEY",   _GROQ_KEY_LOCAL)
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", _GEMINI_KEY_LOCAL)
+def get_groq_key() -> str:
+    """Reads Groq key — from st.secrets on Cloud, from hardcoded value locally."""
+    try:
+        v = st.secrets.get("GROQ_API_KEY", "")
+        return v if v else _GROQ_KEY_LOCAL
+    except Exception:
+        return _GROQ_KEY_LOCAL
+
+def get_gemini_key() -> str:
+    """Reads Gemini key — from st.secrets on Cloud, from hardcoded value locally."""
+    try:
+        v = st.secrets.get("GEMINI_API_KEY", "")
+        return v if v else _GEMINI_KEY_LOCAL
+    except Exception:
+        return _GEMINI_KEY_LOCAL
 
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL   = "llama3-8b-8192"
 GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_URL   = (
-    f"https://generativelanguage.googleapis.com/v1beta/"
-    f"models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-)
 
 ARCHIVE_FILE = "luminary_sessions.json"
 
@@ -180,13 +180,14 @@ def _call_groq(prompt: str) -> str | None:
     Call Groq API (OpenAI-compatible format).
     14,400 free requests/day. ~1 second response time.
     """
-    if not GROQ_API_KEY or GROQ_API_KEY == "PASTE_YOUR_GROQ_KEY_HERE":
+    key = get_groq_key()
+    if not key or key == "PASTE_YOUR_GROQ_KEY_HERE":
         return None
     try:
         resp = requests.post(
             GROQ_URL,
             headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
             },
             json={
@@ -216,6 +217,10 @@ def _call_gemini(contents: list) -> str | None:
     """
     Gemini fallback — used only when Groq fails or key not set.
     """
+    gemini_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{GEMINI_MODEL}:generateContent?key={get_gemini_key()}"
+    )
     safety = [
         {"category": c, "threshold": "BLOCK_NONE"}
         for c in [
@@ -225,7 +230,7 @@ def _call_gemini(contents: list) -> str | None:
     ]
     try:
         resp = requests.post(
-            GEMINI_URL,
+            gemini_url,
             json={"contents": contents, "safetySettings": safety},
             timeout=90,
         )
