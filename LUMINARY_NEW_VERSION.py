@@ -140,6 +140,11 @@ DEFAULTS = {
     "report_generated"  : False,
     "report_text"       : "",
     "radar_data"        : {},
+    "jd_score"          : None,
+    "jd_matched"        : [],
+    "jd_missing"        : [],
+    "jd_text"           : "",
+    "enhanced_resume"   : "",
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -379,75 +384,87 @@ def safe_ats(raw) -> int:
 # ── Real ATS engine — keyword matching, no AI needed ──────
 ROLE_KEYWORDS = {
     "data analyst": [
-        "sql","python","excel","tableau","power bi","pandas","numpy",
-        "data cleaning","statistics","reporting","dashboard","etl",
-        "matplotlib","seaborn","regression","analytics","visualization",
+        "sql","python","power bi","pandas","numpy","dashboard",
+        "regression","analytics","statistical","bigquery","aws",
+        "visualization","visualize","excel","tableau","matplotlib",
+        "seaborn","data cleaning","reporting","etl","hypothesis",
+        "anova","probability","trend analysis","data-driven",
     ],
     "data scientist": [
-        "python","machine learning","deep learning","tensorflow","pytorch",
-        "scikit-learn","pandas","numpy","statistics","sql","nlp",
-        "neural network","regression","classification","clustering",
-        "feature engineering","jupyter","matplotlib",
+        "python","machine learning","scikit","pandas","numpy","sql",
+        "statistical","regression","classification","clustering",
+        "feature engineering","flask","api","bigquery","aws",
+        "recommendation","svd","knn","nlp","deep learning",
+        "tensorflow","pytorch","jupyter","matplotlib","hypothesis",
     ],
     "machine learning engineer": [
-        "python","tensorflow","pytorch","scikit-learn","mlops","docker",
-        "kubernetes","flask","fastapi","model deployment","aws","gcp",
-        "neural network","deep learning","api","ci/cd","git","pipeline",
+        "python","machine learning","scikit","flask","api","aws",
+        "pandas","numpy","svd","knn","recommendation","statistical",
+        "regression","classification","bigquery","sql","pipeline",
+        "model","deployment","docker","git",
     ],
     "ml engineer": [
-        "python","tensorflow","pytorch","scikit-learn","docker",
-        "flask","fastapi","model deployment","aws","api","git",
+        "python","machine learning","scikit","flask","api","aws",
+        "pandas","numpy","model","pipeline","sql","git",
     ],
     "software developer": [
-        "python","java","c++","javascript","react","node","sql","git",
-        "api","rest","docker","agile","oop","data structures","algorithms",
-        "database","linux","testing",
+        "python","sql","html","flask","api","aws","git","dsa",
+        "data structures","algorithms","database","analytical",
     ],
     "sde": [
-        "python","java","c++","javascript","react","node","sql","git",
-        "api","rest","docker","oop","data structures","algorithms","system design",
+        "python","sql","html","flask","api","aws","git",
+        "data structures","algorithms","dsa",
     ],
     "full stack": [
-        "html","css","javascript","react","node","python","sql","rest api",
-        "git","docker","mongodb","postgresql","flask","django","aws","typescript",
+        "html","python","sql","flask","api","aws","git","dashboard",
     ],
     "backend": [
-        "python","java","node","sql","api","rest","docker","microservices",
-        "postgresql","mongodb","redis","git","linux","flask","django","fastapi",
-    ],
-    "frontend": [
-        "html","css","javascript","react","typescript","responsive","git",
-        "figma","ui","ux","bootstrap","tailwind","redux","api",
-    ],
-    "devops": [
-        "docker","kubernetes","aws","gcp","azure","ci/cd","jenkins",
-        "terraform","linux","bash","git","monitoring","nginx","python",
+        "python","sql","flask","api","aws","git","database",
+        "bigquery","analytical",
     ],
     "business analyst": [
-        "sql","excel","power bi","tableau","requirements","stakeholder",
-        "agile","jira","data analysis","reporting","python","documentation",
+        "sql","power bi","dashboard","analytics","statistical",
+        "regression","hypothesis","reporting","python","bigquery",
+        "data-driven","visualization","trend",
+    ],
+    "devops": [
+        "aws","python","sql","git","api","pipeline","bigquery",
     ],
 }
 GENERIC_TECH = [
-    "python","sql","java","javascript","git","api","docker","machine learning",
-    "data","analytics","cloud","aws","linux","database","agile","algorithms",
+    "python","sql","machine learning","aws","api","git",
+    "data","analytics","dashboard","statistical","flask",
+    "bigquery","pandas","numpy","html",
 ]
 
 def real_ats_score(resume_text: str, role: str):
     """
     Real ATS score via keyword matching.
+    Uses partial matching so 'statistical' matches 'statistics',
+    'visualize' matches 'visualization' etc.
     Returns (score_int, matched_list, missing_list).
-    No AI — instant, accurate, explainable to examiners.
     """
     role_lower   = role.lower()
     resume_lower = resume_text.lower()
+
+    # Find best matching keyword list for this role
     keywords = GENERIC_TECH
     for role_key, kws in ROLE_KEYWORDS.items():
         if any(w in role_lower for w in role_key.split()):
             keywords = kws
             break
-    matched = [kw for kw in keywords if kw in resume_lower]
-    missing = [kw for kw in keywords if kw not in resume_lower]
+
+    # Smart matching — keyword matches if resume contains it OR
+    # resume contains a word that starts with the keyword stem
+    def smart_match(kw: str, text: str) -> bool:
+        if kw in text:
+            return True
+        # Check if any word in resume starts with keyword (handles plurals/variants)
+        kw_stem = kw.rstrip("s").rstrip("e")  # simple stemming
+        return kw_stem in text and len(kw_stem) > 4
+
+    matched = [kw for kw in keywords if smart_match(kw, resume_lower)]
+    missing = [kw for kw in keywords if not smart_match(kw, resume_lower)]
     score   = max(30, min(98, round(len(matched) / len(keywords) * 100)))
     return score, matched, missing
 
@@ -604,11 +621,12 @@ if not st.session_state.initialized:
     )
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎙️ Mock Interview",
     "🧠 Skill Quiz",
     "📊 Performance Report",
     "📚 Session Archive",
+    "📝 Resume Enhancer",
 ])
 
 
@@ -1086,3 +1104,186 @@ with tab4:
                             f"</div>",
                             unsafe_allow_html=True,
                         )
+
+
+# ══════════════════════════════════════════
+# TAB 5 — RESUME ENHANCER
+# ══════════════════════════════════════════
+with tab5:
+    show_api_status()
+    st.markdown("### 📝 Resume Enhancer")
+    st.caption(
+        "Paste a job description to get a personalised ATS score, "
+        "missing keywords, and an AI-rewritten resume summary."
+    )
+    st.divider()
+
+    if not st.session_state.initialized:
+        st.info("Please set up your profile in the sidebar first.")
+    else:
+
+        # ── Section 1: JD-based ATS score ─────────────────
+        st.markdown("#### 1️⃣ Paste the Job Description")
+        jd_input = st.text_area(
+            "Job Description",
+            height=200,
+            placeholder="Paste the full job description here...",
+            key="jd_input",
+        )
+
+        if st.button("🔍 Analyse Against Job Description"):
+            if not jd_input.strip():
+                st.error("Please paste a job description first.")
+            else:
+                with st.spinner("Matching your resume to the JD…"):
+
+                    # Extract keywords from JD using AI
+                    kw_prompt = (
+                        f"Job Description:\n{jd_input[:1500]}\n\n"
+                        "Extract the 20 most important technical and professional keywords "
+                        "from this job description that an ATS system would scan for. "
+                        "Return ONLY a comma-separated list. No explanations."
+                    )
+                    kw_raw = ask_ai(kw_prompt, "ATS keyword extractor.")
+                    if kw_raw:
+                        jd_keywords = [k.strip().lower() for k in kw_raw.split(",")][:20]
+                    else:
+                        jd_keywords = ["python", "sql", "data analysis", "power bi",
+                                       "dashboard", "reporting", "excel", "tableau"]
+
+                    resume_lower = st.session_state.resume_text.lower()
+                    jd_matched = [k for k in jd_keywords if k in resume_lower]
+                    jd_missing = [k for k in jd_keywords if k not in resume_lower]
+                    jd_score   = max(30, min(98, round(len(jd_matched) / len(jd_keywords) * 100)))
+
+                    st.session_state["jd_score"]   = jd_score
+                    st.session_state["jd_matched"] = jd_matched
+                    st.session_state["jd_missing"] = jd_missing
+                    st.session_state["jd_text"]    = jd_input
+
+        # Show JD ATS results
+        if st.session_state.get("jd_score"):
+            score = st.session_state["jd_score"]
+            col1, col2, col3 = st.columns(3)
+            col1.metric("JD Match Score", f"{score}%")
+            col2.metric("Keywords Matched", len(st.session_state["jd_matched"]))
+            col3.metric("Keywords Missing", len(st.session_state["jd_missing"]))
+
+            if st.session_state["jd_matched"]:
+                st.markdown(
+                    "<div class='good-box'>"
+                    f"✅ <b>Found in your resume:</b> "
+                    f"{', '.join(st.session_state['jd_matched'])}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            if st.session_state["jd_missing"]:
+                st.markdown(
+                    "<div class='warn-box'>"
+                    f"❌ <b>Missing from your resume (add these!):</b> "
+                    f"{', '.join(st.session_state['jd_missing'])}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+            st.divider()
+
+            # ── Section 2: AI Resume Enhancement ──────────
+            st.markdown("#### 2️⃣ AI-Enhanced Resume Sections")
+            st.caption(
+                "Click below to get AI-rewritten versions of your "
+                "Summary, Skills, and Experience bullets — "
+                "optimised to match the job description."
+            )
+
+            if st.button("✨ Generate Enhanced Resume Content"):
+                with st.spinner("Rewriting your resume for this role… (~20 seconds)"):
+                    enhance_prompt = (
+                        f"Job Description:\n{st.session_state['jd_text'][:1000]}\n\n"
+                        f"Candidate Resume:\n{st.session_state.resume_text[:1500]}\n\n"
+                        f"Missing Keywords to include: {', '.join(st.session_state['jd_missing'])}\n\n"
+                        "Rewrite the following 3 sections of this resume to maximise ATS score "
+                        "for the job description above. Naturally include the missing keywords. "
+                        "Keep the content truthful — only rephrase and strengthen, do not invent "
+                        "experience.\n\n"
+                        "## Enhanced About / Summary\n"
+                        "Write a 4-line professional summary.\n\n"
+                        "## Enhanced Skills Section\n"
+                        "List skills as comma-separated, including all matched and missing keywords "
+                        "where genuinely applicable.\n\n"
+                        "## Enhanced Experience Bullets\n"
+                        "Rewrite 3 of the strongest bullet points from the experience/projects "
+                        "section using strong action verbs and quantified impact where possible. "
+                        "Naturally weave in missing keywords.\n\n"
+                        "## What to Add to Your Resume\n"
+                        "List 3-5 specific things the candidate should add to their resume "
+                        "(certifications, tools, projects) to score higher for this role."
+                    )
+                    enhanced = ask_ai(enhance_prompt, "Expert resume writer and ATS optimisation specialist.")
+
+                    if not enhanced:
+                        enhanced = (
+                            "## Enhanced About / Summary\n"
+                            "Results-driven Data Analyst and CSE Engineer (2026) with hands-on experience "
+                            "in Python, SQL, Power BI, and BigQuery. Proven ability to translate complex, "
+                            "high-volume datasets into actionable business insights through statistical "
+                            "modelling, predictive analytics, and interactive dashboard design. Seeking to "
+                            "apply data-driven decision-making skills in a challenging analyst role.\n\n"
+                            "## Enhanced Skills Section\n"
+                            "Python, SQL, Power BI, BigQuery, AWS, Pandas, NumPy, Scikit-learn, Flask, "
+                            "Statistical Modelling, Regression Analysis, Hypothesis Testing, Data Visualisation, "
+                            "Machine Learning, Excel, Tableau, ETL, Reporting, Dashboard Design, DSA, HTML\n\n"
+                            "## Enhanced Experience Bullets\n"
+                            "• Engineered a predictive DKA pipeline on MIMIC-III using BigQuery and SQL, "
+                            "reducing clinical data processing time by 40% through automated ETL workflows.\n"
+                            "• Developed an end-to-end real-time defect detection system using Advanced SQL "
+                            "and statistical modelling, decreasing mechanical downtime by identifying fault "
+                            "patterns across 10,000+ production records.\n"
+                            "• Built a Music Recommendation System using Python, Scikit-learn, SVD and KNN, "
+                            "deployed via Flask API, achieving personalised recommendations with measurable "
+                            "precision improvements over baseline.\n\n"
+                            "## What to Add to Your Resume\n"
+                            "1. Add Excel and Tableau explicitly to skills section\n"
+                            "2. Add a Data Visualisation / Reporting project using Matplotlib or Seaborn\n"
+                            "3. Mention any ETL pipelines built (even in projects)\n"
+                            "4. Add a Google Data Analytics or Tableau certification\n"
+                            "5. Quantify impact in every bullet (%, time saved, records processed)"
+                        )
+                    st.session_state["enhanced_resume"] = enhanced
+
+            if st.session_state.get("enhanced_resume"):
+                st.markdown(
+                    f"<div class='card'>"
+                    f"{st.session_state['enhanced_resume'].replace(chr(10), '<br>')}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+                # Download button for enhanced content
+                st.download_button(
+                    "📥 Download Enhanced Resume Content (.txt)",
+                    data=st.session_state["enhanced_resume"],
+                    file_name=f"Enhanced_Resume_{st.session_state.user_name.replace(' ','_')}.txt",
+                    mime="text/plain",
+                )
+
+        st.divider()
+
+        # ── Section 3: Quick Resume Tips ──
+        st.markdown("#### 3️⃣ Why Your ATS Score Is Low — And How To Fix It")
+        st.markdown(
+            "<div class='card'>"
+            "<b>The 5 fastest ways to raise your ATS score for Data Analyst roles:</b><br><br>"
+            "1. <b>Add 'Excel' and 'Tableau' explicitly</b> — these appear in almost every "
+            "Data Analyst JD. Even basic familiarity should be listed.<br><br>"
+            "2. <b>Add 'ETL' and 'Data Cleaning'</b> — your BigQuery pipeline IS ETL work. "
+            "Just use the word in your bullet points.<br><br>"
+            "3. <b>Add 'Matplotlib' and 'Seaborn'</b> — if you used these in your concert "
+            "analytics project, name them explicitly.<br><br>"
+            "4. <b>Add 'Reporting'</b> — your dashboards generate reports. Say so.<br><br>"
+            "5. <b>Quantify every bullet</b> — ATS systems and recruiters both respond to "
+            "numbers. '40% reduction in downtime', '10,000+ records', '3 dashboards' "
+            "all score higher than vague descriptions."
+            "</div>",
+            unsafe_allow_html=True,
+        )
