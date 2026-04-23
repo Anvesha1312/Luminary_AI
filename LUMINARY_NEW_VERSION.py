@@ -1,6 +1,6 @@
 """
 LUMINARY AI — Career Intelligence Portal
-Final Year Project — v3.0 (Groq Primary + Gemini Fallback)
+Final Year Project — v4.0 (Groq Only)
 
 Run:  streamlit run LUMINARY_NEW_VERSION.py
 Deps: pip install streamlit pypdf requests pandas plotly groq
@@ -18,35 +18,11 @@ from pypdf import PdfReader
 from datetime import datetime
 
 # ─────────────────────────────────────────
-# CONFIG
-# Works both locally AND on Streamlit Cloud.
-# Locally:  paste keys directly below
-# Cloud:    add keys in Streamlit Cloud → App Settings → Secrets
+# CONFIG — Groq only
 # ─────────────────────────────────────────
-
-# ── Paste your keys here for LOCAL running ──
-_GROQ_KEY_LOCAL   = "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"
-_GEMINI_KEY_LOCAL = "AIzaSyDVWDU4OSoCg_HQUUybO4dBewc7kuDAVg0"
-
-def get_groq_key() -> str:
-    """Reads Groq key — from st.secrets on Cloud, from hardcoded value locally."""
-    try:
-        v = st.secrets.get("GROQ_API_KEY", "")
-        return v if v else _GROQ_KEY_LOCAL
-    except Exception:
-        return _GROQ_KEY_LOCAL
-
-def get_gemini_key() -> str:
-    """Reads Gemini key — from st.secrets on Cloud, from hardcoded value locally."""
-    try:
-        v = st.secrets.get("GEMINI_API_KEY", "")
-        return v if v else _GEMINI_KEY_LOCAL
-    except Exception:
-        return _GEMINI_KEY_LOCAL
-
+GROQ_API_KEY = "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"
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama3-8b-8192"
-GEMINI_MODEL = "gemini-2.5-flash"
+GROQ_MODEL   = "llama3-70b-8192"
 
 ARCHIVE_FILE = "luminary_sessions.json"
 
@@ -170,30 +146,26 @@ for k, v in DEFAULTS.items():
         st.session_state[k] = v
 
 # ─────────────────────────────────────────
-# API ENGINE
+# API ENGINE — Groq only
+# 14,400 free requests/day, ~1 second response
 # ─────────────────────────────────────────
-# ─────────────────────────────────────────
-# API ENGINE — Groq primary, Gemini fallback
-# ─────────────────────────────────────────
-def _call_groq(prompt: str) -> str | None:
-    """
-    Call Groq API (OpenAI-compatible format).
-    14,400 free requests/day. ~1 second response time.
-    """
-    key = get_groq_key()
-    if not key or key == "PASTE_YOUR_GROQ_KEY_HERE":
-        return None
+def ask_ai(prompt: str, system: str = "") -> str | None:
+    """Single-turn Groq call. Returns text or None."""
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
     try:
         resp = requests.post(
             GROQ_URL,
             headers={
-                "Authorization": f"Bearer {key}",
+                "Authorization": f"Bearer {GROQ_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": GROQ_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1024,
+                "model"      : GROQ_MODEL,
+                "messages"   : messages,
+                "max_tokens" : 1024,
                 "temperature": 0.7,
             },
             timeout=30,
@@ -203,49 +175,11 @@ def _call_groq(prompt: str) -> str | None:
             text = data["choices"][0]["message"]["content"].strip()
             if text:
                 st.session_state.api_ok     = True
-                st.session_state.api_source = "Groq (LLaMA 3)"
+                st.session_state.api_source = "Groq (LLaMA 3 70B)"
                 return text
-        if "error" in data:
-            st.session_state._last_api_error = data["error"].get("message", "Groq error")
-        return None
-    except Exception as e:
-        st.session_state._last_api_error = str(e)
-        return None
-
-
-def _call_gemini(contents: list) -> str | None:
-    """
-    Gemini fallback — used only when Groq fails or key not set.
-    """
-    gemini_url = (
-        f"https://generativelanguage.googleapis.com/v1beta/"
-        f"models/{GEMINI_MODEL}:generateContent?key={get_gemini_key()}"
-    )
-    safety = [
-        {"category": c, "threshold": "BLOCK_NONE"}
-        for c in [
-            "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
-            "HARM_CATEGORY_DANGEROUS_CONTENT", "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        ]
-    ]
-    try:
-        resp = requests.post(
-            gemini_url,
-            json={"contents": contents, "safetySettings": safety},
-            timeout=90,
-        )
-        data = resp.json()
         if "error" in data:
             st.session_state.api_ok = False
-            st.session_state._last_api_error = data["error"].get("message", "Gemini error")
-            return None
-        if "candidates" in data and data["candidates"]:
-            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            if text:
-                st.session_state.api_ok     = True
-                st.session_state.api_source = "Gemini 2.5 Flash"
-                return text
-        st.session_state.api_ok = False
+            st.session_state._last_api_error = data["error"].get("message", "Groq error")
         return None
     except requests.exceptions.Timeout:
         st.session_state.api_ok = False
@@ -257,41 +191,46 @@ def _call_gemini(contents: list) -> str | None:
         return None
 
 
-def _raw_call(contents: list) -> str | None:
-    """
-    Master call — Groq only. No Gemini fallback.
-    Converts contents list to a flat prompt string for Groq.
-    """
-    flat_prompt = ""
-    for item in contents:
-        for part in item.get("parts", []):
-            flat_prompt += part.get("text", "") + "\n"
-    flat_prompt = flat_prompt.strip()
-    return _call_groq(flat_prompt)
-
-
-def ask_ai(prompt: str, system: str = ""):
-    """Single-turn call. Returns text or None."""
-    contents = []
-    if system:
-        contents += [
-            {"role": "user",  "parts": [{"text": f"SYSTEM: {system}"}]},
-            {"role": "model", "parts": [{"text": "Understood."}]},
-        ]
-    contents.append({"role": "user", "parts": [{"text": prompt}]})
-    return _raw_call(contents)
-
-
-def ask_ai_chat(history: list, system: str):
-    """Multi-turn call using last 10 messages. Returns text or None."""
-    contents = [
-        {"role": "user",  "parts": [{"text": f"SYSTEM: {system}"}]},
-        {"role": "model", "parts": [{"text": "Understood. I am ready."}]},
-    ]
+def ask_ai_chat(history: list, system: str) -> str | None:
+    """Multi-turn Groq call using last 10 messages. Returns text or None."""
+    messages = [{"role": "system", "content": system}]
     for m in history[-10:]:
-        role = "user" if m["role"] == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": m["content"]}]})
-    return _raw_call(contents)
+        role = "user" if m["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": m["content"]})
+    try:
+        resp = requests.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model"      : GROQ_MODEL,
+                "messages"   : messages,
+                "max_tokens" : 1024,
+                "temperature": 0.7,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        if "choices" in data and data["choices"]:
+            text = data["choices"][0]["message"]["content"].strip()
+            if text:
+                st.session_state.api_ok     = True
+                st.session_state.api_source = "Groq (LLaMA 3 70B)"
+                return text
+        if "error" in data:
+            st.session_state.api_ok = False
+            st.session_state._last_api_error = data["error"].get("message", "Groq error")
+        return None
+    except requests.exceptions.Timeout:
+        st.session_state.api_ok = False
+        st.session_state._last_api_error = "Request timed out. Check internet."
+        return None
+    except Exception as e:
+        st.session_state.api_ok = False
+        st.session_state._last_api_error = str(e)
+        return None
 
 
 # ─────────────────────────────────────────
