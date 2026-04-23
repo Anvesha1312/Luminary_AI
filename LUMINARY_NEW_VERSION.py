@@ -22,7 +22,7 @@ from datetime import datetime
 # ─────────────────────────────────────────
 GROQ_API_KEY = "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"
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama3-70b-8192"
+GROQ_MODEL   = "llama-3.3-70b-versatile"
 
 ARCHIVE_FILE = "luminary_sessions.json"
 
