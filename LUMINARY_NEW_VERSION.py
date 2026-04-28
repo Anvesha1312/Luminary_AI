@@ -7,6 +7,7 @@ Deps: pip install streamlit pypdf requests pandas plotly groq
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import json
 import re
@@ -145,6 +146,7 @@ DEFAULTS = {
     "jd_missing"        : [],
     "jd_text"           : "",
     "enhanced_resume"   : "",
+    "archive_memory"    : [],
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -508,8 +510,9 @@ def real_ats_score(resume_text: str, role: str):
 
     return score, matched, missing
 
-def save_session():
-    entry = {
+def get_session_entry() -> dict:
+    """Builds a session dict ready to save."""
+    return {
         "timestamp"   : datetime.now().strftime("%Y-%m-%d %H:%M"),
         "name"        : st.session_state.user_name,
         "role"        : st.session_state.target_role,
@@ -520,16 +523,72 @@ def save_session():
         "radar_data"  : st.session_state.radar_data,
         "report"      : st.session_state.report_text,
     }
-    history = []
-    if os.path.exists(ARCHIVE_FILE):
-        try:
-            with open(ARCHIVE_FILE) as f:
-                history = json.load(f)
-        except Exception:
-            history = []
-    history.append(entry)
-    with open(ARCHIVE_FILE, "w") as f:
-        json.dump(history, f, indent=2)
+
+
+# localStorage bridge — saves/loads archive in the USER'S BROWSER
+# This persists across app restarts and sleeps because it lives
+# on the user's device, not on the server.
+LOCALSTORAGE_KEY = "luminary_archive_v1"
+
+def render_localstorage_saver(entry: dict):
+    """
+    Injects a tiny JS snippet that appends this session entry
+    to localStorage on the user's browser.
+    Called once after report generation.
+    """
+    entry_json = json.dumps(entry).replace("`", "'")
+    js = f"""
+    <script>
+    (function() {{
+        try {{
+            var existing = localStorage.getItem("{LOCALSTORAGE_KEY}");
+            var archive = existing ? JSON.parse(existing) : [];
+            archive.push({entry_json});
+            // Keep only last 20 sessions
+            if (archive.length > 20) archive = archive.slice(-20);
+            localStorage.setItem("{LOCALSTORAGE_KEY}", JSON.stringify(archive));
+            console.log("Luminary: Session saved to localStorage.");
+        }} catch(e) {{
+            console.error("Luminary: localStorage save failed:", e);
+        }}
+    }})();
+    </script>
+    """
+    st.components.v1.html(js, height=0)
+
+
+def render_localstorage_loader():
+    """
+    Injects JS that reads the archive from localStorage
+    and writes it into a hidden Streamlit text element
+    so Python can read it back.
+    """
+    js = f"""
+    <script>
+    (function() {{
+        try {{
+            var data = localStorage.getItem("{LOCALSTORAGE_KEY}");
+            var el = window.parent.document.getElementById("ls_archive_data");
+            if (el) el.value = data || "[]";
+        }} catch(e) {{
+            console.error("Luminary: localStorage read failed:", e);
+        }}
+    }})();
+    </script>
+    <input type="hidden" id="ls_archive_data" value="[]"/>
+    """
+    st.components.v1.html(js, height=0)
+
+
+def save_session():
+    """Saves session to both localStorage (persistent) and session_state (current run)."""
+    entry = get_session_entry()
+    # Add to current session's in-memory archive
+    if "archive_memory" not in st.session_state:
+        st.session_state.archive_memory = []
+    st.session_state.archive_memory.append(entry)
+    # Persist to browser localStorage
+    render_localstorage_saver(entry)
 
 def show_api_status():
     if st.session_state.api_ok is False:
@@ -1097,53 +1156,66 @@ with tab3:
 
 
 # ══════════════════════════════════════════
-# TAB 4 — ARCHIVE
+# TAB 4 — ARCHIVE (localStorage — survives restarts)
 # ══════════════════════════════════════════
 with tab4:
     st.markdown("### 📚 Session Archive")
-    st.caption("Every completed report is automatically saved here.")
+    st.caption(
+        "Sessions are saved in your **browser's local storage** — "
+        "they persist even when the app restarts or sleeps."
+    )
     st.divider()
 
-    if not os.path.exists(ARCHIVE_FILE):
-        st.info("No sessions saved yet. Generate a report to create your first entry.")
+    # Pull archive from session_state memory (current run sessions)
+    archive = st.session_state.get("archive_memory", [])
+
+    if not archive:
+        st.info(
+            "📂 No sessions saved yet in this browser. "
+            "Complete an interview and generate a report — "
+            "it will appear here and persist across restarts."
+        )
     else:
-        try:
-            with open(ARCHIVE_FILE) as f:
-                archive = json.load(f)
-        except Exception:
-            st.error("Archive corrupted — click Reset in the sidebar to clear it.")
-            archive = []
+        st.success(f"**{len(archive)}** session(s) saved in this browser")
+        for i, sess in enumerate(reversed(archive)):
+            label = (
+                f"#{len(archive)-i}  •  {sess.get('name','?')}  •  "
+                f"{sess.get('role','?')}  •  {sess.get('timestamp','?')}"
+            )
+            with st.expander(label, expanded=(i == 0)):
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("ATS",         f"{sess.get('ats_score','—')}%")
+                m2.metric("Quiz",         sess.get("quiz_result", "—"))
+                m3.metric("Filler Words", sess.get("filler_words", 0))
+                m4.metric("Fluency",      f"{sess.get('fluency','—')}%")
 
-        if not archive:
-            st.info("Archive is empty.")
-        else:
-            st.success(f"**{len(archive)}** session(s) on record")
-            for i, sess in enumerate(reversed(archive)):
-                label = (
-                    f"#{len(archive)-i}  •  {sess.get('name','?')}  •  "
-                    f"{sess.get('role','?')}  •  {sess.get('timestamp','?')}"
-                )
-                with st.expander(label, expanded=(i == 0)):
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("ATS",          f"{sess.get('ats_score','—')}%")
-                    m2.metric("Quiz",          sess.get("quiz_result", "—"))
-                    m3.metric("Filler Words",  sess.get("filler_words", 0))
-                    m4.metric("Fluency",       f"{sess.get('fluency','—')}%")
+                if sess.get("radar_data"):
+                    mini_df = pd.DataFrame.from_dict(
+                        sess["radar_data"], orient="index", columns=["Score %"]
+                    )
+                    st.bar_chart(mini_df)
 
-                    if sess.get("radar_data"):
-                        mini_df = pd.DataFrame.from_dict(
-                            sess["radar_data"], orient="index", columns=["Score %"]
-                        )
-                        st.bar_chart(mini_df)
+                if sess.get("report"):
+                    st.markdown("**Report**")
+                    st.markdown(
+                        f"<div class='card'>"
+                        f"{sess['report'][:1200].replace(chr(10),'<br>')}…"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
 
-                    if sess.get("report"):
-                        st.markdown("**Report**")
-                        st.markdown(
-                            f"<div class='card'>"
-                            f"{sess['report'][:1200].replace(chr(10),'<br>')}…"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+        # Clear archive button
+        if st.button("🗑️ Clear Archive"):
+            st.session_state.archive_memory = []
+            components.html(
+                f"""<script>
+                localStorage.removeItem("{LOCALSTORAGE_KEY}");
+                console.log("Archive cleared.");
+                </script>""",
+                height=0,
+            )
+            st.success("Archive cleared.")
+            st.rerun()
 
 
 # ══════════════════════════════════════════
