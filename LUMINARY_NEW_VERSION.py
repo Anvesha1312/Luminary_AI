@@ -383,89 +383,129 @@ def safe_ats(raw) -> int:
 
 # ── Real ATS engine — keyword matching, no AI needed ──────
 ROLE_KEYWORDS = {
-    "data analyst": [
-        "sql","python","power bi","pandas","numpy","dashboard",
-        "regression","analytics","statistical","bigquery","aws",
-        "visualization","visualize","excel","tableau","matplotlib",
-        "seaborn","data cleaning","reporting","etl","hypothesis",
-        "anova","probability","trend analysis","data-driven",
-    ],
-    "data scientist": [
-        "python","machine learning","scikit","pandas","numpy","sql",
-        "statistical","regression","classification","clustering",
-        "feature engineering","flask","api","bigquery","aws",
-        "recommendation","svd","knn","nlp","deep learning",
-        "tensorflow","pytorch","jupyter","matplotlib","hypothesis",
-    ],
-    "machine learning engineer": [
-        "python","machine learning","scikit","flask","api","aws",
-        "pandas","numpy","svd","knn","recommendation","statistical",
-        "regression","classification","bigquery","sql","pipeline",
-        "model","deployment","docker","git",
-    ],
-    "ml engineer": [
-        "python","machine learning","scikit","flask","api","aws",
-        "pandas","numpy","model","pipeline","sql","git",
-    ],
-    "software developer": [
-        "python","sql","html","flask","api","aws","git","dsa",
-        "data structures","algorithms","database","analytical",
-    ],
-    "sde": [
-        "python","sql","html","flask","api","aws","git",
-        "data structures","algorithms","dsa",
-    ],
-    "full stack": [
-        "html","python","sql","flask","api","aws","git","dashboard",
-    ],
-    "backend": [
-        "python","sql","flask","api","aws","git","database",
-        "bigquery","analytical",
-    ],
-    "business analyst": [
-        "sql","power bi","dashboard","analytics","statistical",
-        "regression","hypothesis","reporting","python","bigquery",
-        "data-driven","visualization","trend",
-    ],
-    "devops": [
-        "aws","python","sql","git","api","pipeline","bigquery",
-    ],
+    "data analyst": {
+        "must_have": ["sql", "python", "data", "analytics", "dashboard"],
+        "good_to_have": ["power bi", "pandas", "excel", "tableau", "reporting",
+                         "visuali", "statistic", "regression", "bigquery", "etl",
+                         "matplotlib", "seaborn", "hypothesis", "trend", "insight"],
+        "bonus": ["aws", "machine learning", "numpy", "pipeline", "forecast",
+                  "bi", "kpi", "metric", "clean", "process", "automat"],
+    },
+    "data scientist": {
+        "must_have": ["python", "machine learning", "data", "model", "statistic"],
+        "good_to_have": ["scikit", "pandas", "numpy", "sql", "regression",
+                         "classif", "cluster", "feature", "neural", "nlp",
+                         "flask", "api", "visuali", "bigquery", "aws"],
+        "bonus": ["tensorflow", "pytorch", "deep learning", "svd", "knn",
+                  "recommendation", "hypothesis", "deploy", "pipeline"],
+    },
+    "machine learning engineer": {
+        "must_have": ["python", "machine learning", "model", "api", "data"],
+        "good_to_have": ["scikit", "flask", "pandas", "numpy", "sql",
+                         "regression", "deploy", "pipeline", "aws", "statistic"],
+        "bonus": ["tensorflow", "pytorch", "docker", "svd", "knn", "git",
+                  "bigquery", "neural", "feature", "mlops"],
+    },
+    "ml engineer": {
+        "must_have": ["python", "machine learning", "model", "api"],
+        "good_to_have": ["scikit", "flask", "pandas", "sql", "aws", "pipeline"],
+        "bonus": ["tensorflow", "pytorch", "docker", "svd", "knn", "git"],
+    },
+    "software developer": {
+        "must_have": ["python", "sql", "api", "data", "algorithm"],
+        "good_to_have": ["html", "flask", "git", "database", "dsa", "aws"],
+        "bonus": ["javascript", "react", "docker", "oop", "test", "debug"],
+    },
+    "sde": {
+        "must_have": ["python", "sql", "algorithm", "data structure", "api"],
+        "good_to_have": ["html", "flask", "git", "aws", "dsa", "database"],
+        "bonus": ["javascript", "system design", "docker", "oop"],
+    },
+    "business analyst": {
+        "must_have": ["sql", "data", "analytics", "report", "dashboard"],
+        "good_to_have": ["power bi", "python", "excel", "statistic", "visuali",
+                         "bigquery", "regression", "hypothesis", "insight"],
+        "bonus": ["tableau", "aws", "etl", "kpi", "metric", "forecast", "trend"],
+    },
+    "full stack": {
+        "must_have": ["python", "html", "sql", "api", "flask"],
+        "good_to_have": ["aws", "git", "database", "javascript", "data"],
+        "bonus": ["docker", "react", "node", "css", "mongodb"],
+    },
+    "devops": {
+        "must_have": ["python", "aws", "sql", "pipeline", "api"],
+        "good_to_have": ["git", "docker", "bigquery", "database", "automat"],
+        "bonus": ["kubernetes", "ci/cd", "linux", "bash", "monitoring"],
+    },
 }
-GENERIC_TECH = [
-    "python","sql","machine learning","aws","api","git",
-    "data","analytics","dashboard","statistical","flask",
-    "bigquery","pandas","numpy","html",
-]
+
+GENERIC_KEYWORDS = {
+    "must_have": ["python", "sql", "data", "api"],
+    "good_to_have": ["analytics", "machine learning", "aws", "statistic", "visuali"],
+    "bonus": ["flask", "pandas", "bigquery", "git", "dashboard", "html"],
+}
 
 def real_ats_score(resume_text: str, role: str):
     """
-    Real ATS score via keyword matching.
-    Uses partial matching so 'statistical' matches 'statistics',
-    'visualize' matches 'visualization' etc.
-    Returns (score_int, matched_list, missing_list).
+    Multi-factor ATS scoring — much smarter than exact keyword matching.
+
+    Scoring breakdown:
+      - Must-have keywords  : 50% of score (core requirements)
+      - Good-to-have        : 30% of score (preferred skills)
+      - Bonus keywords      : 10% of score (nice extras)
+      - Resume quality      : 10% of score (length, structure, sections)
+
+    Uses partial/stem matching so:
+      'statistic' matches 'statistical modeling'
+      'visuali'   matches 'visualization' AND 'visualize'
+      'scikit'    matches 'scikit-learn'
+      'classif'   matches 'classification'
     """
     role_lower   = role.lower()
     resume_lower = resume_text.lower()
 
-    # Find best matching keyword list for this role
-    keywords = GENERIC_TECH
+    # Find best matching keyword set
+    kw_set = GENERIC_KEYWORDS
     for role_key, kws in ROLE_KEYWORDS.items():
         if any(w in role_lower for w in role_key.split()):
-            keywords = kws
+            kw_set = kws
             break
 
-    # Smart matching — keyword matches if resume contains it OR
-    # resume contains a word that starts with the keyword stem
-    def smart_match(kw: str, text: str) -> bool:
-        if kw in text:
-            return True
-        # Check if any word in resume starts with keyword (handles plurals/variants)
-        kw_stem = kw.rstrip("s").rstrip("e")  # simple stemming
-        return kw_stem in text and len(kw_stem) > 4
+    def match(kw: str, text: str) -> bool:
+        """Partial stem matching — keyword just needs to appear anywhere in text."""
+        return kw.lower() in text
 
-    matched = [kw for kw in keywords if smart_match(kw, resume_lower)]
-    missing = [kw for kw in keywords if not smart_match(kw, resume_lower)]
-    score   = max(30, min(98, round(len(matched) / len(keywords) * 100)))
+    # Score each category
+    must      = kw_set["must_have"]
+    good      = kw_set["good_to_have"]
+    bonus     = kw_set["bonus"]
+
+    must_matched  = [k for k in must  if match(k, resume_lower)]
+    good_matched  = [k for k in good  if match(k, resume_lower)]
+    bonus_matched = [k for k in bonus if match(k, resume_lower)]
+
+    must_score  = (len(must_matched)  / max(len(must),  1)) * 50
+    good_score  = (len(good_matched)  / max(len(good),  1)) * 30
+    bonus_score = (len(bonus_matched) / max(len(bonus), 1)) * 10
+
+    # Resume quality score (10%) — checks for key sections and length
+    quality = 0
+    if len(resume_text) > 300:   quality += 2   # not too short
+    if len(resume_text) > 800:   quality += 2   # decent length
+    if "experience" in resume_lower or "work" in resume_lower: quality += 2
+    if "project" in resume_lower:  quality += 1
+    if "education" in resume_lower: quality += 1
+    if "skill" in resume_lower:    quality += 1
+    if any(c.isdigit() for c in resume_text): quality += 1  # has numbers/metrics
+
+    total = must_score + good_score + bonus_score + quality
+    score = max(40, min(98, round(total)))
+
+    # Build matched/missing lists for display
+    all_keywords = must + good + bonus
+    matched = [k for k in all_keywords if match(k, resume_lower)]
+    missing = [k for k in must + good   if not match(k, resume_lower)]
+
     return score, matched, missing
 
 def save_session():
