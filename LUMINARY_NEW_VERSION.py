@@ -20,7 +20,7 @@ from datetime import datetime
 # ─────────────────────────────────────────
 # CONFIG — Groq only
 # ─────────────────────────────────────────
-GROQ_API_KEY = "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"
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 
@@ -1269,7 +1269,7 @@ with tab5:
 
         st.divider()
 
-        # ── Section 3: Quick Resume Tips ──
+        # ── Section 3: Quick Resume Tips specific to Anvesha ──
         st.markdown("#### 3️⃣ Why Your ATS Score Is Low — And How To Fix It")
         st.markdown(
             "<div class='card'>"
