@@ -13,6 +13,7 @@ import json
 import re
 import os
 import random
+import io
 import pandas as pd
 import plotly.graph_objects as go
 from pypdf import PdfReader
@@ -138,6 +139,7 @@ DEFAULTS = {
     "last_feedback"     : "",
     "quiz_score"        : 0,
     "quiz_total"        : 0,
+    "quiz_asked"        : [],
     "report_generated"  : False,
     "report_text"       : "",
     "radar_data"        : {},
@@ -274,7 +276,20 @@ def fallback_followup(last_user_msg: str):
     Returns a relevant follow-up question.
     """
     role = st.session_state.target_role
-    msg  = last_user_msg.lower()
+    msg  = last_user_msg.lower().strip()
+
+    # Handle uncertainty first — don't just skip past it
+    uncertainty_phrases = ["idk", "i don't know", "i dont know", "not sure",
+                           "no idea", "dunno", "unsure", "i'm not sure", "im not sure",
+                           "i have no idea", "i am not sure"]
+    if any(phrase in msg for phrase in uncertainty_phrases) or len(msg) < 8:
+        skills = st.session_state.extracted_skills
+        topic  = skills[0] if skills else "your projects"
+        return (
+            f"No worries — let's approach it differently. "
+            f"Think about a specific time you used {topic} in a project. "
+            f"Walk me through what problem you were trying to solve, even in simple terms."
+        )
 
     if any(w in msg for w in ["python", "streamlit", "flask", "django", "fastapi", "script"]):
         return (
@@ -581,14 +596,28 @@ def render_localstorage_loader():
 
 
 def save_session():
-    """Saves session to both localStorage (persistent) and session_state (current run)."""
+    """Saves session to disk (luminary_sessions.json) AND session_state memory."""
     entry = get_session_entry()
-    # Add to current session's in-memory archive
+    # Add to current run's in-memory list
     if "archive_memory" not in st.session_state:
         st.session_state.archive_memory = []
     st.session_state.archive_memory.append(entry)
-    # Persist to browser localStorage
-    render_localstorage_saver(entry)
+
+    # Persist to JSON file on disk
+    existing = []
+    if os.path.exists(ARCHIVE_FILE):
+        try:
+            with open(ARCHIVE_FILE, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    existing.append(entry)
+    existing = existing[-20:]   # keep last 20 sessions
+    try:
+        with open(ARCHIVE_FILE, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception as e:
+        st.warning(f"Could not save session to disk: {e}")
 
 def show_api_status():
     if st.session_state.api_ok is False:
@@ -633,9 +662,13 @@ with st.sidebar:
         elif resume_file is None:
             st.error("Please upload your resume PDF.")
         else:
-            reader   = PdfReader(resume_file)
-            raw_text = "".join(p.extract_text() or "" for p in reader.pages)
-            resume   = raw_text[:2000]
+            pdf_bytes = resume_file.read()
+            reader    = PdfReader(io.BytesIO(pdf_bytes))
+            raw_text  = "".join(p.extract_text() or "" for p in reader.pages)
+            if not raw_text.strip():
+                st.error("Could not extract text from your PDF. Make sure it is a text-based (not scanned) PDF.")
+                st.stop()
+            resume    = raw_text[:3000]
 
             with st.spinner("Analysing resume…"):
                 # Real ATS — keyword matching, no API call needed
@@ -779,30 +812,36 @@ with tab1:
         asked_list = "\n• ".join(ai_msgs[-6:]) if ai_msgs else "None yet"
 
         # ── System prompt varies by turn number ───────────
+        skills_str = ", ".join(st.session_state.extracted_skills) if st.session_state.extracted_skills else "the candidate's skills"
         if user_turns == 1:
             # First response after candidate's intro
             system_prompt = (
                 f"You are a professional, friendly hiring manager. "
                 f"You are interviewing {st.session_state.user_name} for "
                 f"'{st.session_state.target_role}'.\n\n"
-                f"Resume:\n{st.session_state.resume_text[:600]}\n\n"
+                f"Candidate's Resume:\n{st.session_state.resume_text[:1200]}\n\n"
+                f"Key skills on resume: {skills_str}\n\n"
                 "The candidate just gave their introduction. "
                 "DO THESE TWO THINGS IN ORDER:\n"
                 "1. In exactly ONE sentence, acknowledge something SPECIFIC from what they said "
-                "(reference an actual detail — their project, a tool they mentioned, "
+                "(reference an actual detail — their project name, a specific tool they mentioned, "
                 "or what motivated them). Do not be generic.\n"
-                "2. Then ask ONE practical technical question directly tied to a specific "
-                "project or technology from their resume.\n"
+                "2. Then ask ONE practical technical question directly tied to a SPECIFIC "
+                "project or technology named in their resume.\n"
                 "Ask 'how' or 'why' — never 'what is the definition of'.\n"
                 "Total response: maximum 3 sentences."
             )
         else:
             system_prompt = (
                 f"You are a sharp, experienced technical interviewer for '{st.session_state.target_role}'.\n"
-                f"Resume:\n{st.session_state.resume_text[:500]}\n\n"
+                f"Candidate's Resume:\n{st.session_state.resume_text[:1000]}\n\n"
+                f"Key skills: {skills_str}\n\n"
                 f"Questions already asked — DO NOT repeat or rephrase any:\n"
                 f"• {asked_list}\n\n"
                 "Read the candidate's LAST response carefully. Then:\n"
+                "• If they said 'idk', 'i don't know', 'not sure', 'no idea', or similar — "
+                "do NOT move on. Acknowledge their uncertainty warmly, then break the question "
+                "into a simpler hint or ask a related easier question on the same topic.\n"
                 "• If their answer was vague or too short — push back on THAT specific point. "
                 "Ask them to be more concrete or give actual numbers/examples.\n"
                 "• If their answer was strong — move to the NEXT topic in rotation: "
@@ -875,6 +914,7 @@ with tab2:
             st.session_state.current_question  = None
             st.session_state.question_answered = False
             st.session_state.last_feedback     = ""
+            st.session_state.quiz_asked        = []
             st.rerun()
 
     else:
@@ -882,10 +922,14 @@ with tab2:
         if st.session_state.current_question is None:
             diff = quiz_difficulty()
             with st.spinner(f"Generating {diff} question on {st.session_state.quiz_topic}…"):
+                asked_qs = st.session_state.quiz_asked[-10:]  # last 10 asked
+                asked_str = "\n".join(f"- {q[:120]}" for q in asked_qs) if asked_qs else "None yet"
+
                 if "Resume" in st.session_state.quiz_topic:
                     prompt = (
                         f"Resume:\n{st.session_state.resume_text[:500]}\n\n"
                         f"Generate ONE {diff}-difficulty MCQ relevant to these skills.\n"
+                        f"Questions already asked (DO NOT repeat or rephrase these):\n{asked_str}\n"
                         "Format:\nQuestion: [text]\nA) ...\nB) ...\nC) ...\nD) ...\n"
                         "Do NOT include the answer."
                     )
@@ -893,19 +937,26 @@ with tab2:
                     prompt = (
                         f"Generate ONE {diff}-difficulty MCQ on: {st.session_state.quiz_topic}\n"
                         "Audience: final-year CS/IT undergraduate.\n"
+                        f"Questions already asked (DO NOT repeat or rephrase these):\n{asked_str}\n"
                         "Format EXACTLY:\nQuestion: [text]\nA) ...\nB) ...\nC) ...\nD) ...\n"
                         "Do NOT include the answer."
                     )
-                raw_q = ask_ai(prompt, "Technical MCQ generator. Output question and options only.")
+                raw_q = ask_ai(prompt, "Technical MCQ generator. Output question and options only. Never repeat a question from the already-asked list.")
 
                 if raw_q and len(raw_q) > 20:
                     st.session_state.current_question = raw_q
+                    st.session_state.quiz_asked.append(raw_q[:120])
                 else:
-                    pool = QUIZ_FALLBACKS.get(st.session_state.quiz_topic, [])
-                    st.session_state.current_question = (
+                    pool = [q for q in QUIZ_FALLBACKS.get(st.session_state.quiz_topic, [])
+                            if q[:80] not in [a[:80] for a in st.session_state.quiz_asked]]
+                    if not pool:
+                        pool = QUIZ_FALLBACKS.get(st.session_state.quiz_topic, [])
+                    chosen = (
                         random.choice(pool) if pool
                         else "Question: What does CPU stand for?\nA) Central Processing Unit\nB) Core Program Unit\nC) Central Program Utility\nD) None"
                     )
+                    st.session_state.current_question = chosen
+                    st.session_state.quiz_asked.append(chosen[:120])
                 st.session_state.question_answered = False
                 st.session_state.last_feedback     = ""
             st.rerun()
@@ -982,6 +1033,7 @@ with tab2:
                     st.session_state.current_question  = None
                     st.session_state.question_answered = False
                     st.session_state.last_feedback     = ""
+                    st.session_state.quiz_asked        = []
                     st.rerun()
 
 
@@ -1156,64 +1208,134 @@ with tab3:
 
 
 # ══════════════════════════════════════════
-# TAB 4 — ARCHIVE (localStorage — survives restarts)
+# TAB 4 — ARCHIVE (JSON file — survives restarts)
 # ══════════════════════════════════════════
 with tab4:
     st.markdown("### 📚 Session Archive")
     st.caption(
-        "Sessions are saved in your **browser's local storage** — "
-        "they persist even when the app restarts or sleeps."
+        "Sessions are saved to **luminary_sessions.json** on disk — "
+        "they persist across app restarts."
     )
     st.divider()
 
-    # Pull archive from session_state memory (current run sessions)
-    archive = st.session_state.get("archive_memory", [])
+    # Load from disk each time tab is viewed
+    disk_archive = []
+    if os.path.exists(ARCHIVE_FILE):
+        try:
+            with open(ARCHIVE_FILE, "r") as f:
+                disk_archive = json.load(f)
+        except Exception:
+            disk_archive = []
+
+    # Merge disk archive with any in-memory sessions not yet written
+    archive = disk_archive or st.session_state.get("archive_memory", [])
 
     if not archive:
         st.info(
-            "📂 No sessions saved yet in this browser. "
+            "📂 No sessions saved yet. "
             "Complete an interview and generate a report — "
             "it will appear here and persist across restarts."
         )
     else:
-        st.success(f"**{len(archive)}** session(s) saved in this browser")
-        for i, sess in enumerate(reversed(archive)):
-            label = (
-                f"#{len(archive)-i}  •  {sess.get('name','?')}  •  "
-                f"{sess.get('role','?')}  •  {sess.get('timestamp','?')}"
+        st.success(f"**{len(archive)}** session(s) saved")
+
+        # ── Session selector ──────────────────────────────
+        session_labels = [
+            f"#{len(archive)-i}  •  {s.get('name','?')}  •  {s.get('role','?')}  •  {s.get('timestamp','?')}"
+            for i, s in enumerate(reversed(archive))
+        ]
+        selected_label = st.selectbox("Select a session to view:", session_labels, index=0)
+        selected_idx   = session_labels.index(selected_label)
+        sess           = list(reversed(archive))[selected_idx]
+
+        st.divider()
+
+        # ── Header ───────────────────────────────────────
+        st.markdown(
+            f"<div class='card'>"
+            f"<b>👤 Candidate:</b> {sess.get('name','—')}<br>"
+            f"<b>🎯 Role:</b> {sess.get('role','—')}<br>"
+            f"<b>🕐 Date:</b> {sess.get('timestamp','—')}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Metrics row ───────────────────────────────────
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("ATS Score",    f"{sess.get('ats_score','—')}%")
+        m2.metric("Quiz Result",  sess.get("quiz_result", "—"))
+        m3.metric("Filler Words", sess.get("filler_words", 0))
+        m4.metric("Fluency",      f"{sess.get('fluency','—')}%")
+
+        # ── Radar / skill chart ───────────────────────────
+        if sess.get("radar_data"):
+            st.markdown("#### 📊 Skill Radar")
+            rd = sess["radar_data"]
+            fig = go.Figure(go.Scatterpolar(
+                r=list(rd.values()),
+                theta=list(rd.keys()),
+                fill="toself",
+                line=dict(color="#00ffc8", width=2.5),
+                marker=dict(color="#00ffc8", size=7),
+            ))
+            fig.update_layout(
+                polar=dict(
+                    bgcolor="rgba(0,0,0,0)",
+                    radialaxis=dict(visible=True, range=[0, 100],
+                        tickfont=dict(color="rgba(200,210,230,0.45)", size=10),
+                        gridcolor="rgba(255,255,255,0.07)",
+                        linecolor="rgba(255,255,255,0.07)"),
+                    angularaxis=dict(tickfont=dict(color="#c8d2e8", size=13),
+                        gridcolor="rgba(255,255,255,0.07)"),
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor ="rgba(0,0,0,0)",
+                font=dict(color="#c8d2e8"),
+                showlegend=False,
+                margin=dict(t=40, b=40, l=60, r=60),
+                height=380,
             )
-            with st.expander(label, expanded=(i == 0)):
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("ATS",         f"{sess.get('ats_score','—')}%")
-                m2.metric("Quiz",         sess.get("quiz_result", "—"))
-                m3.metric("Filler Words", sess.get("filler_words", 0))
-                m4.metric("Fluency",      f"{sess.get('fluency','—')}%")
+            st.plotly_chart(fig, use_container_width=True)
 
-                if sess.get("radar_data"):
-                    mini_df = pd.DataFrame.from_dict(
-                        sess["radar_data"], orient="index", columns=["Score %"]
-                    )
-                    st.bar_chart(mini_df)
+        # ── Full report ───────────────────────────────────
+        if sess.get("report"):
+            st.markdown("#### 📋 Full Performance Report")
+            st.markdown(
+                f"<div class='card'>"
+                f"{sess['report'].replace(chr(10), '<br>')}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-                if sess.get("report"):
-                    st.markdown("**Report**")
-                    st.markdown(
-                        f"<div class='card'>"
-                        f"{sess['report'][:1200].replace(chr(10),'<br>')}…"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+            # Per-session download
+            export_txt = (
+                f"LUMINARY AI — CAREER INTELLIGENCE REPORT\n{'='*52}\n"
+                f"Candidate : {sess.get('name','—')}\n"
+                f"Role      : {sess.get('role','—')}\n"
+                f"Date      : {sess.get('timestamp','—')}\n\n"
+                f"ATS Score   : {sess.get('ats_score','—')}%\n"
+                f"Quiz Result : {sess.get('quiz_result','—')}\n"
+                f"Filler Words: {sess.get('filler_words', 0)}\n"
+                f"Fluency     : {sess.get('fluency','—')}%\n\n"
+                f"{'='*52}\nFULL REPORT\n{'='*52}\n"
+                f"{sess['report']}"
+            )
+            st.download_button(
+                "📥 Download This Session's Report (.txt)",
+                data=export_txt,
+                file_name=f"Luminary_{sess.get('name','session').replace(' ','_')}_{sess.get('timestamp','').replace(':','-').replace(' ','_')}.txt",
+                mime="text/plain",
+            )
+        else:
+            st.info("No report found for this session. Reports are saved when you click 'Generate Report' in the Performance Report tab.")
+
+        st.divider()
 
         # Clear archive button
-        if st.button("🗑️ Clear Archive"):
+        if st.button("🗑️ Clear Entire Archive"):
             st.session_state.archive_memory = []
-            components.html(
-                f"""<script>
-                localStorage.removeItem("{LOCALSTORAGE_KEY}");
-                console.log("Archive cleared.");
-                </script>""",
-                height=0,
-            )
+            if os.path.exists(ARCHIVE_FILE):
+                os.remove(ARCHIVE_FILE)
             st.success("Archive cleared.")
             st.rerun()
 
@@ -1381,21 +1503,42 @@ with tab5:
 
         st.divider()
 
-        # ── Section 3: Quick Resume Tips specific to Anvesha ──
+        # ── Section 3: Dynamic ATS tips based on actual role + missing keywords ──
         st.markdown("#### 3️⃣ Why Your ATS Score Is Low — And How To Fix It")
+
+        role     = st.session_state.target_role
+        missing  = st.session_state.ats_missing[:6]
+        skills   = st.session_state.extracted_skills
+
+        tips_key = f"ats_tips_{role}"
+        if tips_key not in st.session_state:
+            with st.spinner("Generating personalised ATS tips…"):
+                tips_prompt = (
+                    f"Role: {role}\n"
+                    f"Candidate skills found: {', '.join(skills)}\n"
+                    f"Keywords missing from resume: {', '.join(missing)}\n\n"
+                    "Give exactly 5 specific, actionable tips to raise this candidate's ATS score "
+                    f"for a {role} role. Reference the actual missing keywords above. "
+                    "Format each tip as: [bold keyword action] — [one sentence why it matters]. "
+                    "No generic advice. No preamble."
+                )
+                tips_raw = ask_ai(tips_prompt, "ATS resume coach. Be specific, concise, role-aware.")
+                if not tips_raw:
+                    tips_raw = (
+                        f"1. **Add missing keywords explicitly** — your resume is missing: "
+                        f"{', '.join(missing[:4]) if missing else 'check the list above'}.\n"
+                        f"2. **Quantify every bullet point** — ATS and recruiters both respond to numbers.\n"
+                        f"3. **Mirror the job title '{role}' in your summary** — exact match boosts score.\n"
+                        f"4. **List tools individually** — don't bundle them (e.g. write 'Python, SQL' not 'various tools').\n"
+                        f"5. **Add a Skills section** — ATS parsers look for a dedicated skills block."
+                    )
+                st.session_state[tips_key] = tips_raw
+
+        tips_html = st.session_state[tips_key].replace("\n", "<br>")
         st.markdown(
-            "<div class='card'>"
-            "<b>The 5 fastest ways to raise your ATS score for Data Analyst roles:</b><br><br>"
-            "1. <b>Add 'Excel' and 'Tableau' explicitly</b> — these appear in almost every "
-            "Data Analyst JD. Even basic familiarity should be listed.<br><br>"
-            "2. <b>Add 'ETL' and 'Data Cleaning'</b> — your BigQuery pipeline IS ETL work. "
-            "Just use the word in your bullet points.<br><br>"
-            "3. <b>Add 'Matplotlib' and 'Seaborn'</b> — if you used these in your concert "
-            "analytics project, name them explicitly.<br><br>"
-            "4. <b>Add 'Reporting'</b> — your dashboards generate reports. Say so.<br><br>"
-            "5. <b>Quantify every bullet</b> — ATS systems and recruiters both respond to "
-            "numbers. '40% reduction in downtime', '10,000+ records', '3 dashboards' "
-            "all score higher than vague descriptions."
-            "</div>",
+            f"<div class='card'>"
+            f"<b>5 fastest ways to raise your ATS score for {role} roles:</b><br><br>"
+            f"{tips_html}"
+            f"</div>",
             unsafe_allow_html=True,
         )
