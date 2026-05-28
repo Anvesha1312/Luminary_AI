@@ -3,7 +3,7 @@
 
 > Built with Python • Streamlit • Groq API (LLaMA 3 70B) • Deployed Live
 
-[🔗 Live Demo →]()
+[🔗 Live Demo →](https://luminaryai.streamlit.app/)
 
 ---
 
@@ -23,7 +23,10 @@ Luminary AI reads YOUR resume and builds a fully personalised interview experien
 Python • Streamlit • Groq API • LLaMA 3 70B • pypdf • Plotly • JavaScript (localStorage)
 
 ## Screenshots
-[Add 2-3 screenshots here]
+
+<img width="1911" height="910" alt="image" src="https://github.com/user-attachments/assets/7843860c-a217-4d78-8372-8cc6e60f7491" />
+<img width="1837" height="964" alt="image" src="https://github.com/user-attachments/assets/df40f7bb-840f-460e-b5a5-04c65c3dba2e" />
+<img width="1919" height="910" alt="image" src="https://github.com/user-attachments/assets/516d3f2a-88a7-4b82-b015-9fb24a34c0a3" />
 
 ## Run Locally
 pip install -r requirements.txt
